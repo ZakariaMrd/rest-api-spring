@@ -18,9 +18,7 @@ public class RestfulWebServicesApplication {
 			public void addCorsMappings(CorsRegistry registry) {
 				registry.addMapping("/**")
 						.allowedMethods("*")
-						.allowedOrigins("http://localhost:3000")
-						.allowedHeaders("*")
-						.allowCredentials(true);
+						.allowedOrigins("http://localhost:3000");
 			}
 		};
 	}

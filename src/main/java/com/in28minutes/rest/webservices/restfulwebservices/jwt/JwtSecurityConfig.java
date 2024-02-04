@@ -8,7 +8,6 @@ import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.util.UUID;
 
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.boot.autoconfigure.security.servlet.PathRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,8 +15,12 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
+import org.springframework.security.config.annotation.web.configurers.oauth2.server.resource.OAuth2ResourceServerConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -34,6 +37,7 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
 @Configuration
 @EnableWebSecurity
@@ -41,18 +45,25 @@ public class JwtSecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {
+        // https://github.com/spring-projects/spring-security/issues/1231
+        // https://docs.spring.io/spring-boot/docs/current/reference/html/data.html#data.sql.h2-web-console.spring-security
         return httpSecurity
                 .authorizeHttpRequests(auth -> auth
-                        .antMatchers("/authenticate").permitAll()
-                        .antMatchers(PathRequest.toH2Console().toString()).permitAll()
-                        .antMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(new AntPathRequestMatcher("/authenticate")).permitAll()
+                        .requestMatchers(PathRequest.toH2Console()).permitAll() // h2-console is a servlet and NOT recommended for a production
+                        .requestMatchers(req -> req.getMethod().equals(HttpMethod.OPTIONS.name())).permitAll()
                         .anyRequest().authenticated())
                 .csrf(AbstractHttpConfigurer::disable)
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(withDefaults()))
-                .httpBasic(withDefaults())
-                .headers(header -> header.frameOptions().sameOrigin())
+                .sessionManagement(session -> session.
+                        sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                //.oauth2ResourceServer(OAuth2ResourceServerConfigurer::jwt) // Deprecated in SB 3.1.x
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(withDefaults())) // Starting from SB 3.1.x using Lambda DSL
+                .httpBasic(
+                        Customizer.withDefaults())
+//                .headers(header -> { // Deprecated in SB 3.1.x
+//                    header.frameOptions().sameOrigin();
+//                })
+                .headers(header -> header.frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin)) // Starting from SB 3.1.x using Lambda DSL
                 .build();
     }
 
@@ -79,18 +90,17 @@ public class JwtSecurityConfig {
     public JWKSource<SecurityContext> jwkSource() {
         JWKSet jwkSet = new JWKSet(rsaKey());
 
-        return (jwkSelector, securityContext) -> {
-            return jwkSelector.select(jwkSet);
-        };
+        return (((jwkSelector, securityContext)
+                -> jwkSelector.select(jwkSet)));
     }
 
     @Bean
-    public JwtEncoder jwtEncoder(JWKSource<SecurityContext> jwkSource) {
+    JwtEncoder jwtEncoder(JWKSource<SecurityContext> jwkSource) {
         return new NimbusJwtEncoder(jwkSource);
     }
 
     @Bean
-    public JwtDecoder jwtDecoder() throws JOSEException {
+    JwtDecoder jwtDecoder() throws JOSEException {
         return NimbusJwtDecoder
                 .withPublicKey(rsaKey().toRSAPublicKey())
                 .build();
@@ -100,7 +110,8 @@ public class JwtSecurityConfig {
     public RSAKey rsaKey() {
         KeyPair keyPair = keyPair();
 
-        return new RSAKey.Builder((RSAPublicKey) keyPair.getPublic())
+        return new RSAKey
+                .Builder((RSAPublicKey) keyPair.getPublic())
                 .privateKey((RSAPrivateKey) keyPair.getPrivate())
                 .keyID(UUID.randomUUID().toString())
                 .build();
@@ -117,4 +128,6 @@ public class JwtSecurityConfig {
                     "Unable to generate an RSA Key Pair", e);
         }
     }
+
 }
+
